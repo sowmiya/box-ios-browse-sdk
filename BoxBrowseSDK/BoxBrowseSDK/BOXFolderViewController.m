@@ -399,29 +399,40 @@
     BOXFolderRequest *folderRequest = [self.contentClient folderInfoRequestWithID:self.folderID];
     folderRequest.SDKIdentifier = BOX_BROWSE_SDK_IDENTIFIER;
     folderRequest.SDKVersion = BOX_BROWSE_SDK_VERSION;
-    [folderRequest performRequestWithCompletion:^(BOXFolder *folder, NSError *error) {
-        if (error) {
+
+    void (^completionBlock)(NSArray *, NSError *) = ^void(NSArray *items, NSError *error) {
+        if (error == nil) {
+            self.title = self.folder.name;
+            completion(items);
+        } else {
+            self.navigationController.toolbarHidden = YES;
+            [self didFailToLoadItemsWithError:error];
+        }
+
+        if (self.tableView.visibleCells.count < 1) {
+            [self switchToEmptyStateWithError:error];
+            self.searchController.searchBar.hidden = YES;
+        } else {
+            [self switchToNonEmptyView];
+            self.searchController.searchBar.hidden = NO;
+        }
+    };
+
+    __block BOOL retrievedCachedFolder = NO;
+
+    [folderRequest performRequestWithCached:^(BOXFolder *folder, NSError *error) {
+        if (folder && !error) {
+            self.folder = folder;
+            [self fetchItemsInFolder:self.folder withCompletion:completionBlock];
+            retrievedCachedFolder = YES;
+        }
+    } refreshed:^(BOXFolder *folder, NSError *error) {
+        if (folder && !error) {
+            self.folder = folder;
+            [self fetchItemsInFolder:self.folder withCompletion:completionBlock];
+        } else if (!retrievedCachedFolder) {
             [self didFailToLoadItemsWithError:error];
             self.navigationController.toolbarHidden = YES;
-        } else {
-            self.folder = folder;
-            [self fetchItemsInFolder:self.folder withCompletion:^(NSArray *items, NSError *error) {
-                if (error == nil) {
-                    self.title = self.folder.name;
-                    completion(items);
-                } else {
-                    self.navigationController.toolbarHidden = YES;
-                    [self didFailToLoadItemsWithError:error];
-                }
-                
-                if (self.tableView.visibleCells.count < 1) {
-                    [self switchToEmptyStateWithError:error];
-                    self.searchController.searchBar.hidden = YES;
-                } else {
-                    [self switchToNonEmptyView];
-                    self.searchController.searchBar.hidden = NO;
-                }
-            }];
         }
     }];
 }
@@ -432,9 +443,22 @@
     request.SDKIdentifier = BOX_BROWSE_SDK_IDENTIFIER;
     request.SDKVersion = BOX_BROWSE_SDK_VERSION;
     [request setRequestAllItemFields:YES];
-    [request performRequestWithCompletion:^(NSArray *items, NSError *error) {
+
+    __block BOOL retrievedCachedItems = NO;
+
+    [request performRequestWithCached:^(NSArray *items, NSError *error) {
         if (completion) {
             completion(items, error);
+            if (items && !error) {
+                retrievedCachedItems = YES;
+            }
+        }
+    } refreshed:^(NSArray *items, NSError *error) {
+        if (completion) {
+            // If we failed to retrieve items from the cache or received an update, execute the block again
+            if (!retrievedCachedItems || (!error && items)) {
+                completion(items, error);
+            }
         }
     }];
 }
